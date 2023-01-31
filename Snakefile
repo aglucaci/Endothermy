@@ -87,7 +87,8 @@ rule all:
         expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree"), GENE=CANDIDATE_GENES),
         expand(os.path.join(BASEDIR, "data", "Partitions", "{P}_BG.txt"), P=PARTITION_LIST),
         expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_fgOnly_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST)
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.{P}.BUSTEDPH.json"), GENE=CANDIDATE_GENES, P=PARTITION_LIST)
     #end input
 #end rule
 
@@ -256,7 +257,7 @@ rule busted_ph:
         msa =  rules.strike_ambigs.output.output,
         tree = rules.label_tree_bg.output.output
     output:
-        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.BUSTEDPH.json")
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.{P}.BUSTEDPH.json")
     shell:
         "{HYPHY} {BUSTED_PH_BF} --alignment {input.msa} --tree {input.tree} --srv Yes --starting-points 10 --output {output.output} --branches FOREGROUND"
 #end rule
