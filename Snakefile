@@ -14,6 +14,7 @@ import json
 import csv
 from pathlib import Path
 import glob
+from Bio import SeqIO
 
 # =============================================================================
 # Declares
@@ -81,8 +82,12 @@ rule all:
         expand(os.path.join(OUTDIR, "{GENE}.fa_protein.aln"), GENE=CANDIDATE_GENES),
         expand(os.path.join(OUTDIR, "{GENE}.fa_codons.fasta"), GENE=CANDIDATE_GENES),
         expand(os.path.join(OUTDIR, "{GENE}.fa_codons_duplicates.json"), GENE=CANDIDATE_GENES),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta"), GENE=CANDIDATE_GENES),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.raxml.bestTree"), GENE=CANDIDATE_GENES)
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.fasta"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(BASEDIR, "data", "Partitions", "{P}_BG.txt"), P=PARTITION_LIST),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_fgOnly_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST)
     #end input
 #end rule
 
@@ -98,7 +103,6 @@ rule clean:
     shell:
        "bash scripts/cleaner.sh {input.input} {output.output}"
 #end rule
-
 
 #----------------------------------------------------------------------------
 # Alignment
@@ -138,11 +142,34 @@ rule post_msa:
 # Alignment Quality Control
 #----------------------------------------------------------------------------
 
+# Trim the end of the FASTA ID that pre-msa adds
+rule trim_fasta_id:
+    input:
+        input = rules.post_msa.output.codons_fas
+    output:
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.fasta")
+    run:
+        records = []
+        with open(input.input, "r") as handle:
+            for m, record in enumerate(SeqIO.parse(handle, "fasta")):
+                _id = record.id.split("_")
+                _id = "_".join(_id[:-1])
+                print(record.id, _id)
+                record.id = _id
+                record.description = _id
+                records.append(record)
+            #end for
+        #end with
+        # Write to file
+        SeqIO.write(records, output.output, "fasta")
+    #end run
+#end rule
+
 rule strike_ambigs:
    input:
-       input_msa = rules.post_msa.output.codons_fas
+       input_msa = rules.trim_fasta_id.output.output
    output:
-       output = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta")
+       output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta")
    shell:
       "{HYPHY} {STRIKE_AMBIGS_BF} --alignment {input.input_msa} --output {output.output}"
 #end rule
@@ -157,24 +184,83 @@ rule raxml_ng:
     input:
         input = rules.strike_ambigs.output.output
     output:
-        output = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.raxml.bestTree")
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree")
     shell:
         "raxml-ng --model GTR+G --msa {input.input} --threads {params.THREADS} --force --redo"
 #end rule 
 
 #----------------------------------------------------------------------------
+# Prepare Background Species for each Scenario
+#----------------------------------------------------------------------------
+
+rule prepare_bg:
+    input:
+        foreground_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_FG.txt"),
+        nuisance_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_Nuisance.txt"),
+        all_species = os.path.join(BASEDIR, "data", "Partitions", "All_Species.txt")
+    output:
+        background_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_BG.txt")
+    run:
+        # --- Read in data
+        with open(input.all_species, "r") as f:
+            all_species = [line for line in f]
+        #end with
+        with open(input.nuisance_file, "r") as f:
+            nu_species = [line for line in f]
+        #end with
+        with open(input.foreground_file) as f:
+            fg_species = [line for line in f]
+        #end with
+        # --- Create BG partition
+        species_no_nu = [item for item in all_species if item not in nu_species]
+        bg_species = [item for item in species_no_nu if item not in fg_species]
+        # --- Write to file
+        with open(output.background_file, "w") as f:
+            for line in bg_species:
+                f.write(line)
+            #end for
+        #end with
+#end rule
+
+#----------------------------------------------------------------------------
 # Label tree partitions for BUSTED-PH
 #----------------------------------------------------------------------------
 
-rule label_tree:
+rule label_tree_fg:
     input:
         tree = rules.raxml_ng.output.output,
-        partition_file = os.path.join(BASEDIR, "data", "Partitions", "{P}.txt")    
+        partition_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_FG.txt"),   
     output:
-        output = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.raxml.bestTree.Labeled_{P}.nwk")
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_fgOnly_{P}.nwk")
     shell:
         "{HYPHY} {LABEL_TREE_BF} --tree {input.tree} --list {input.partition_file} --output {output.output} --internal-nodes 'Parsimony' --label FOREGROUND" 
 #end rule
+
+rule label_tree_bg:
+    input:
+        tree = rules.label_tree_fg.output.output,
+        partition_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_BG.txt")
+    output:
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_{P}.nwk")
+    shell:
+        "{HYPHY} {LABEL_TREE_BF} --tree {input.tree} --list {input.partition_file} --output {output.output} --internal-nodes 'Parsimony' --label BACKGROUND" 
+#end rule
+
+
+#----------------------------------------------------------------------------
+# Selection analyses
+#----------------------------------------------------------------------------
+
+rule busted_ph:
+    input:
+        msa =  rules.strike_ambigs.output.output,
+        tree = rules.label_tree_bg.output.output
+    output:
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.BUSTEDPH.json")
+    shell:
+        "{HYPHY} {BUSTED_PH_BF} --alignment {input.msa} --tree {input.tree} --srv Yes --starting-points 10 --output {output.output} --branches FOREGROUND"
+#end rule
+
 
 #----------------------------------------------------------------------------
 # End of file
