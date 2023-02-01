@@ -1,7 +1,7 @@
 """
 @Description: Fish endothermy examination
 @Authors: Alexander Lucaci, Avery Selberg
-@Version: 2023.1
+@Version: 2023.2
 """
 
 # =============================================================================
@@ -63,6 +63,7 @@ BUSTED_PH_BF = os.path.join(HYPHY_ANALYSES, "BUSTED-PH", "BUSTED-PH.bf")
 LABEL_TREE_BF = os.path.join(HYPHY_ANALYSES, "LabelTrees", "label-tree.bf")
 PREMSA = os.path.join(HYPHY_ANALYSES, "codon-msa", "pre-msa.bf")
 POSTMSA = os.path.join(HYPHY_ANALYSES, "codon-msa", "post-msa.bf")
+FILTER_OUTLIERS_BF = os.path.join(HYPHY_ANALYSES, "find-outliers", "find-outliers-slac.bf")
 
 # Create output directories
 Path(os.path.join(BASEDIR, "results")).mkdir(parents=True, exist_ok=True)
@@ -82,13 +83,17 @@ rule all:
         expand(os.path.join(OUTDIR, "{GENE}.fa_protein.aln"), GENE=CANDIDATE_GENES),
         expand(os.path.join(OUTDIR, "{GENE}.fa_codons.fasta"), GENE=CANDIDATE_GENES),
         expand(os.path.join(OUTDIR, "{GENE}.fa_codons_duplicates.json"), GENE=CANDIDATE_GENES),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.fasta"), GENE=CANDIDATE_GENES),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta"), GENE=CANDIDATE_GENES),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.raxml.bestTree"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.SLAC.json"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.SA.FilterOutliers.fasta"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.SA.FilterOutliers.json"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta"), GENE=CANDIDATE_GENES),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree"), GENE=CANDIDATE_GENES),
         expand(os.path.join(BASEDIR, "data", "Partitions", "{P}_BG.txt"), P=PARTITION_LIST),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_fgOnly_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST),
-        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.{P}.BUSTEDPH.json"), GENE=CANDIDATE_GENES, P=PARTITION_LIST)
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree.labeled_fgOnly_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree.labeled_{P}.nwk"), GENE=CANDIDATE_GENES, P=PARTITION_LIST),
+        expand(os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.{P}.BUSTEDPH.json"), GENE=CANDIDATE_GENES, P=PARTITION_LIST),
     #end input
 #end rule
 
@@ -143,12 +148,63 @@ rule post_msa:
 # Alignment Quality Control
 #----------------------------------------------------------------------------
 
+rule strike_ambigs:
+   input:
+       input_msa = rules.post_msa.output.codons_fas
+   output:
+       output = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta")
+   shell:
+      "{HYPHY} {STRIKE_AMBIGS_BF} --alignment {input.input_msa} --output {output.output}"
+#end rule
+
+#----------------------------------------------------------------------------
+# Initial Phylogenetic inference
+#----------------------------------------------------------------------------
+
+rule raxml_ng:
+    params:
+        THREADS = PPN
+    input:
+        input = rules.strike_ambigs.output.output
+    output:
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.raxml.bestTree")
+    shell:
+        "raxml-ng --model GTR+G --msa {input.input} --threads {params.THREADS} --force --redo"
+#end rule 
+
+#----------------------------------------------------------------------------
+# Run SLAC
+#----------------------------------------------------------------------------
+
+rule SLAC:
+    input: 
+        codon_aln = rules.strike_ambigs.output.output,
+        tree = rules.raxml_ng.output.output
+    output: 
+        results = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.SLAC.json")
+    shell: 
+        "mpirun -np {PPN} {HYPHYMPI} SLAC --alignment {input.codon_aln} --tree {input.tree} --output {output.results}"
+#end rule 
+
+rule filter_outliers:
+    input:
+        slac_json = rules.SLAC.output.results
+    output:
+        fasta = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.FilterOutliers.fasta"),
+        json  = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.FilterOutliers.json")
+    shell:
+        "{HYPHY} {FILTER_OUTLIERS_BF} --slac {input.slac_json} --output {output.fasta} --outlier-coord-output {output.json}"
+#end rule
+
+#----------------------------------------------------------------------------
 # Trim the end of the FASTA ID that pre-msa adds
+# This is done so that the annotation of the tree can be done easier.
+#----------------------------------------------------------------------------
 rule trim_fasta_id:
     input:
-        input = rules.post_msa.output.codons_fas
+        input = rules.filter_outliers.output.fasta
     output:
-        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.fasta")
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta")
     run:
         records = []
         with open(input.input, "r") as handle:
@@ -165,30 +221,6 @@ rule trim_fasta_id:
         SeqIO.write(records, output.output, "fasta")
     #end run
 #end rule
-
-rule strike_ambigs:
-   input:
-       input_msa = rules.trim_fasta_id.output.output
-   output:
-       output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta")
-   shell:
-      "{HYPHY} {STRIKE_AMBIGS_BF} --alignment {input.input_msa} --output {output.output}"
-#end rule
-
-#----------------------------------------------------------------------------
-# Phylogenetic inference
-#----------------------------------------------------------------------------
-
-rule raxml_ng:
-    params:
-        THREADS = PPN
-    input:
-        input = rules.strike_ambigs.output.output
-    output:
-        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree")
-    shell:
-        "raxml-ng --model GTR+G --msa {input.input} --threads {params.THREADS} --force --redo"
-#end rule 
 
 #----------------------------------------------------------------------------
 # Prepare Background Species for each Scenario
@@ -224,15 +256,31 @@ rule prepare_bg:
 #end rule
 
 #----------------------------------------------------------------------------
+# Filterd-Outliers Phylogenetic inference
+#----------------------------------------------------------------------------
+
+rule raxml_ng_fo:
+    params:
+        THREADS = PPN
+    input:
+        input = rules.trim_fasta_id.output.output
+    output:
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree")
+    shell:
+        "raxml-ng --model GTR+G --msa {input.input} --threads {params.THREADS} --force --redo"
+#end rule
+
+
+#----------------------------------------------------------------------------
 # Label tree partitions for BUSTED-PH
 #----------------------------------------------------------------------------
 
 rule label_tree_fg:
     input:
-        tree = rules.raxml_ng.output.output,
+        tree = rules.raxml_ng_fo.output.output,
         partition_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_FG.txt"),   
     output:
-        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_fgOnly_{P}.nwk")
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree.labeled_fgOnly_{P}.nwk")
     shell:
         "{HYPHY} {LABEL_TREE_BF} --tree {input.tree} --list {input.partition_file} --output {output.output} --internal-nodes 'Parsimony' --label FOREGROUND" 
 #end rule
@@ -242,7 +290,7 @@ rule label_tree_bg:
         tree = rules.label_tree_fg.output.output,
         partition_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_BG.txt")
     output:
-        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.raxml.bestTree.labeled_{P}.nwk")
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree.labeled_{P}.nwk")
     shell:
         "{HYPHY} {LABEL_TREE_BF} --tree {input.tree} --list {input.partition_file} --output {output.output} --internal-nodes 'Parsimony' --label BACKGROUND" 
 #end rule
@@ -257,11 +305,10 @@ rule busted_ph:
         msa =  rules.strike_ambigs.output.output,
         tree = rules.label_tree_bg.output.output
     output:
-        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.fasta.{P}.BUSTEDPH.json")
+        output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.{P}.BUSTEDPH.json")
     shell:
-        "{HYPHY} {BUSTED_PH_BF} --alignment {input.msa} --tree {input.tree} --srv Yes --starting-points 10 --output {output.output} --branches FOREGROUND"
+        "{HYPHY} {BUSTED_PH_BF} --alignment {input.msa} --tree {input.tree} --srv Yes --starting-points 10 --output {output.output} --branches FOREGROUND --comparison BACKGROUND"
 #end rule
-
 
 #----------------------------------------------------------------------------
 # End of file

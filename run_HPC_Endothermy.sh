@@ -25,7 +25,7 @@ snakemake \
       -s Snakefile \
       --cluster-config cluster.json \
       --cluster "qsub -V -l nodes={cluster.nodes}:ppn={cluster.ppn} -q {cluster.name} -l walltime={cluster.walltime} -e logs -o logs" \
-      --jobs 10 all \
+      --jobs 20 all \
       --rerun-incomplete \
       --keep-going \
       --reason \
