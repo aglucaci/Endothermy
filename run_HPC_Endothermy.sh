@@ -8,7 +8,7 @@ echo ""
 git clone https://github.com/veg/hyphy-analyses.git
 
 # Set up the pipeline failure expectations.
-set -euo pipefail
+#set -euo pipefail
 
 echo "--- Initialized --- "
 
@@ -29,7 +29,9 @@ snakemake \
       --rerun-incomplete \
       --keep-going \
       --reason \
-      --latency-wait 60 
+      --latency-wait 60 \
+      --use-conda
+
 
 # End Snakemake command
 

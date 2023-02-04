@@ -51,8 +51,11 @@ print("# We will process", len(CANDIDATE_GENES), "candidate gene files")
 # Software Settings
 # =============================================================================
 
-HYPHY    = "hyphy"
-HYPHYMPI = "HYPHYMPI"
+#HYPHY    = "hyphy"
+HYPHY     = "/home/aglucaci/anaconda3/envs/ENDOTHERMY/bin/hyphy"
+#HYPHYMPI = "HYPHYMPI"
+HYPHYMPI  = "/home/aglucaci/anaconda3/envs/ENDOTHERMY/bin/HYPHYMPI"
+
 HYPHY_ANALYSES = os.path.join(BASEDIR, "hyphy-analyses")
 STRIKE_AMBIGS_BF = os.path.join(BASEDIR, "scripts", "strike-ambigs.bf")
 OUTDIR = os.path.join(BASEDIR, "results", LABEL)
@@ -106,6 +109,8 @@ rule clean:
         input = os.path.join(DATA_DIRECTORY, "{GENE}")
     output:
         output = os.path.join(OUTDIR, "{GENE}.fa")
+    conda:
+        "environment.yml"
     shell:
        "bash scripts/cleaner.sh {input.input} {output.output}"
 #end rule
@@ -120,6 +125,8 @@ rule pre_msa:
     output: 
         protein_fas = os.path.join(OUTDIR, "{GENE}.fa_protein.fas"),
         nucleotide_fas = os.path.join(OUTDIR, "{GENE}.fa_nuc.fas")
+    conda:
+        "environment.yml"
     shell: 
         "mpirun -np {PPN} {HYPHYMPI} {PREMSA} --input {input.codons}"
 #end rule 
@@ -129,6 +136,8 @@ rule mafft:
         protein = rules.pre_msa.output.protein_fas
     output:
         protein_aln = os.path.join(OUTDIR, "{GENE}.fa_protein.aln")
+    conda:
+        "environment.yml"
     shell:
         "mafft --auto {input.protein} > {output.protein_aln}"
 #end rule
@@ -140,6 +149,8 @@ rule post_msa:
     output: 
         codons_fas = os.path.join(OUTDIR, "{GENE}.fa_codons.fasta"),
         duplicates_json = os.path.join(OUTDIR, "{GENE}.fa_codons_duplicates.json")
+    conda:
+        "environment.yml"
     shell: 
         "mpirun -np {PPN} {HYPHYMPI} {POSTMSA} --protein-msa {input.protein_aln} --nucleotide-sequences {input.nucleotide_seqs} --output {output.codons_fas} --duplicates {output.duplicates_json}"
 #end rule 
@@ -153,6 +164,8 @@ rule strike_ambigs:
        input_msa = rules.post_msa.output.codons_fas
    output:
        output = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta")
+   conda:
+       "environment.yml"
    shell:
       "{HYPHY} {STRIKE_AMBIGS_BF} --alignment {input.input_msa} --output {output.output}"
 #end rule
@@ -168,6 +181,8 @@ rule raxml_ng:
         input = rules.strike_ambigs.output.output
     output:
         output = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.raxml.bestTree")
+    conda:
+       "environment.yml"
     shell:
         "raxml-ng --model GTR+G --msa {input.input} --threads {params.THREADS} --force --redo"
 #end rule 
@@ -182,6 +197,8 @@ rule SLAC:
         tree = rules.raxml_ng.output.output
     output: 
         results = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.fasta.SLAC.json")
+    conda:
+       "environment.yml"
     shell: 
         "mpirun -np {PPN} {HYPHYMPI} SLAC --alignment {input.codon_aln} --tree {input.tree} --output {output.results}"
 #end rule 
@@ -192,6 +209,8 @@ rule filter_outliers:
     output:
         fasta = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.FilterOutliers.fasta"),
         json  = os.path.join(OUTDIR, "{GENE}.fa_codons.SA.FilterOutliers.json")
+    conda:
+       "environment.yml"
     shell:
         "{HYPHY} {FILTER_OUTLIERS_BF} --slac {input.slac_json} --output {output.fasta} --outlier-coord-output {output.json}"
 #end rule
@@ -266,6 +285,8 @@ rule raxml_ng_fo:
         input = rules.trim_fasta_id.output.output
     output:
         output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree")
+    conda:
+       "environment.yml"
     shell:
         "raxml-ng --model GTR+G --msa {input.input} --threads {params.THREADS} --force --redo"
 #end rule
@@ -281,6 +302,8 @@ rule label_tree_fg:
         partition_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_FG.txt"),   
     output:
         output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree.labeled_fgOnly_{P}.nwk")
+    conda:
+       "environment.yml"
     shell:
         "{HYPHY} {LABEL_TREE_BF} --tree {input.tree} --list {input.partition_file} --output {output.output} --internal-nodes 'Parsimony' --label FOREGROUND" 
 #end rule
@@ -291,6 +314,8 @@ rule label_tree_bg:
         partition_file = os.path.join(BASEDIR, "data", "Partitions", "{P}_BG.txt")
     output:
         output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.raxml.bestTree.labeled_{P}.nwk")
+    conda:
+       "environment.yml"
     shell:
         "{HYPHY} {LABEL_TREE_BF} --tree {input.tree} --list {input.partition_file} --output {output.output} --internal-nodes 'Parsimony' --label BACKGROUND" 
 #end rule
@@ -302,10 +327,12 @@ rule label_tree_bg:
 
 rule busted_ph:
     input:
-        msa =  rules.strike_ambigs.output.output,
+        msa =  rules.trim_fasta_id.output.output,
         tree = rules.label_tree_bg.output.output
     output:
         output = os.path.join(OUTDIR, "{GENE}.fa_codons.ID.SA.FilterOutliers.fasta.{P}.BUSTEDPH.json")
+    conda:
+       "environment.yml"
     shell:
         "{HYPHY} {BUSTED_PH_BF} --alignment {input.msa} --tree {input.tree} --srv Yes --starting-points 10 --output {output.output} --branches FOREGROUND --comparison BACKGROUND"
 #end rule

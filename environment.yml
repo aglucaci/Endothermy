@@ -1,4 +1,4 @@
-name: ENDOTHERMY
+name: ENDOTHERMY_PRJCT
 channels:
   - conda-forge
   - bioconda
@@ -6,10 +6,11 @@ channels:
 
 dependencies:
   - biopython=1.80
-  - hyphy=2.5.42
+  - hyphy=2.5.46
   - raxml-ng=1.1.0 
   - snakemake=7.20.0
   - tn93=1.0.9
   - python-bioext=0.20.4
   - python=3.8
   - mafft=7.515
+  - mamba=1.2.0
